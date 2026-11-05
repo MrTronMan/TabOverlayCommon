@@ -24,6 +24,8 @@ import de.codecrafter47.taboverlay.config.template.TemplateCreationContext;
 
 import javax.annotation.Nonnull;
 import java.text.SimpleDateFormat;
+import java.time.DateTimeException;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.TimeZone;
 import java.util.concurrent.ScheduledFuture;
@@ -47,10 +49,20 @@ public class TimePlaceholderResolver implements PlaceholderResolver<Context> {
             SimpleDateFormat format = DEFAULT_FORMAT;
             if (args.size() > 1) {
                 StringBuilder formatString = new StringBuilder();
+                TimeZone timeZone = configTabOverlayManager.getTimeZone();
                 for (int i = 1; i < args.size(); i++) {
                     if (args.get(i) instanceof PlaceholderArg.Text) {
                         String s = ((PlaceholderArg.Text) args.get(i)).getValue();
-                        if (i != 1) {
+                        if (s.regionMatches(true, 0, "tz=", 0, 3)) {
+                            String id = s.substring(3);
+                            try {
+                                timeZone = TimeZone.getTimeZone(ZoneId.of(id, ZoneId.SHORT_IDS));
+                            } catch (DateTimeException ex) {
+                                throw new PlaceholderException("Unknown time zone " + id, ex);
+                            }
+                            continue;
+                        }
+                        if (formatString.length() > 0) {
                             formatString.append(' ');
                         }
                         formatString.append(s);
@@ -59,8 +71,7 @@ public class TimePlaceholderResolver implements PlaceholderResolver<Context> {
                     }
                 }
                 try {
-                    TimeZone timeZone = configTabOverlayManager.getTimeZone();
-                    format = new SimpleDateFormat(formatString.toString());
+                    format = new SimpleDateFormat(formatString.length() > 0 ? formatString.toString() : "HH:mm:ss");
                     if (timeZone != null) {
                         format.setTimeZone(timeZone);
                     }
