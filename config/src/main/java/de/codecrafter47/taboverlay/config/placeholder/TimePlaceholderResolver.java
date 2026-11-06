@@ -48,49 +48,85 @@ public class TimePlaceholderResolver implements PlaceholderResolver<Context> {
     @Override
     public PlaceholderBuilder<?, ?> resolve(PlaceholderBuilder<Context, ?> builder, List<PlaceholderArg> args, TemplateCreationContext tcc) throws UnknownPlaceholderException, PlaceholderException {
         if (args.size() >= 1 && args.get(0) instanceof PlaceholderArg.Text && "time".equalsIgnoreCase(((PlaceholderArg.Text) args.get(0)).getValue())) {
+            if (args.size() >= 2 && args.get(1) instanceof PlaceholderArg.Text
+                    && "dayoffset".equalsIgnoreCase(((PlaceholderArg.Text) args.get(1)).getValue())) {
+                return resolveDayOffset(builder, args);
+            }
             SimpleDateFormat format = DEFAULT_FORMAT;
-            if (args.size() >= 1 && args.get(0) instanceof PlaceholderArg.Text && "time_day_offset".equalsIgnoreCase(((PlaceholderArg.Text) args.get(0)).getValue())) {
-                ZoneId target = null;
-                TimeZone global = configTabOverlayManager.getTimeZone();
-                ZoneId reference = global != null ? global.toZoneId() : ZoneId.systemDefault();
+            if (args.size() > 1) {
+                StringBuilder formatString = new StringBuilder();
+                TimeZone timeZone = configTabOverlayManager.getTimeZone();
                 for (int i = 1; i < args.size(); i++) {
-                    if (!(args.get(i) instanceof PlaceholderArg.Text)) {
-                        throw new PlaceholderException("Use of placeholder in time_day_offset is not allowed");
-                    }
-                    String s = ((PlaceholderArg.Text) args.get(i)).getValue();
-                    if (s.regionMatches(true, 0, "tz=", 0, 3)) {
-                        try {
-                            target = ZoneId.of(s.substring(3), ZoneId.SHORT_IDS);
-                        } catch (DateTimeException ex) {
-                            throw new PlaceholderException("Unknown time zone " + s.substring(3), ex);
-                        }
-                    } else {
-                        throw new PlaceholderException("Unknown argument " + s);
-                    }
-                }
-                if (target == null) {
-                    throw new PlaceholderException("time_day_offset requires tz=<zone>");
-                }
-                final ZoneId targetZone = target;
-                final ZoneId referenceZone = reference;
-                args.clear();
-                return builder.acquireData(TimeProvider::new, TYPE_TOKEN_LONG, false)
-                        .transformData(millis -> {
-                            Instant now = Instant.ofEpochMilli(millis);
-                            long diff = ChronoUnit.DAYS.between(
-                                    now.atZone(referenceZone).toLocalDate(),
-                                    now.atZone(targetZone).toLocalDate());
-                            if (diff == 0) {
-                                return "";
+                    if (args.get(i) instanceof PlaceholderArg.Text) {
+                        String s = ((PlaceholderArg.Text) args.get(i)).getValue();
+                        if (s.regionMatches(true, 0, "tz=", 0, 3)) {
+                            String id = s.substring(3);
+                            try {
+                                timeZone = TimeZone.getTimeZone(ZoneId.of(id, ZoneId.SHORT_IDS));
+                            } catch (DateTimeException ex) {
+                                throw new PlaceholderException("Unknown time zone " + id, ex);
                             }
-                            return diff > 0 ? "(+" + diff + ")" : "(" + diff + ")";
-                        }, TypeToken.STRING);
+                            continue;
+                        }
+                        if (formatString.length() > 0) {
+                            formatString.append(' ');
+                        }
+                        formatString.append(s);
+                    } else {
+                        throw new PlaceholderException("Use of placeholder in time format is not allowed");
+                    }
+                }
+                try {
+                    format = new SimpleDateFormat(formatString.length() > 0 ? formatString.toString() : "HH:mm:ss");
+                    if (timeZone != null) {
+                        format.setTimeZone(timeZone);
+                    }
+                } catch (IllegalArgumentException ex) {
+                    throw new PlaceholderException("Invalid time format", ex);
+                }
             }
             args.clear();
             return builder.acquireData(TimeProvider::new, TYPE_TOKEN_LONG, false)
                     .transformData(format::format, TypeToken.STRING);
         }
         throw new UnknownPlaceholderException();
+    }
+
+    private PlaceholderBuilder<?, ?> resolveDayOffset(PlaceholderBuilder<Context, ?> builder, List<PlaceholderArg> args) throws PlaceholderException {
+        ZoneId target = null;
+        TimeZone global = configTabOverlayManager.getTimeZone();
+        final ZoneId reference = global != null ? global.toZoneId() : ZoneId.systemDefault();
+        for (int i = 2; i < args.size(); i++) {
+            if (!(args.get(i) instanceof PlaceholderArg.Text)) {
+                throw new PlaceholderException("Use of placeholder in time dayoffset is not allowed");
+            }
+            String s = ((PlaceholderArg.Text) args.get(i)).getValue();
+            if (s.regionMatches(true, 0, "tz=", 0, 3)) {
+                try {
+                    target = ZoneId.of(s.substring(3), ZoneId.SHORT_IDS);
+                } catch (DateTimeException ex) {
+                    throw new PlaceholderException("Unknown time zone " + s.substring(3), ex);
+                }
+            } else {
+                throw new PlaceholderException("Unknown argument " + s);
+            }
+        }
+        if (target == null) {
+            throw new PlaceholderException("time dayoffset requires tz=<zone>");
+        }
+        final ZoneId targetZone = target;
+        args.clear();
+        return builder.acquireData(TimeProvider::new, TYPE_TOKEN_LONG, false)
+                .transformData(millis -> {
+                    Instant now = Instant.ofEpochMilli(millis);
+                    long diff = ChronoUnit.DAYS.between(
+                            now.atZone(reference).toLocalDate(),
+                            now.atZone(targetZone).toLocalDate());
+                    if (diff == 0) {
+                        return "";
+                    }
+                    return diff > 0 ? "(+" + diff + ")" : "(" + diff + ")";
+                }, TypeToken.STRING);
     }
 
     private static class TimeProvider implements PlaceholderDataProvider<Context, Long> {
